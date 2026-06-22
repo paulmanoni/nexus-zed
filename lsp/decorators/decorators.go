@@ -341,9 +341,10 @@ func HoverAt(text string, pos Pos) string {
 // styles, so every theme colors them. The editor paints only these ranges; the
 // rest of the comment stays comment-colored.
 const (
-	TokKeyword = 0 // the decorator itself, e.g. `@rest` (the `@` is included)
-	TokMethod  = 1 // HTTP method / auth verb — colored like a constant
-	TokString  = 2 // path / name / type arguments — colored like a string
+	TokKeyword  = 0 // the decorator itself, e.g. `@rest` (the `@` is included)
+	TokMethod   = 1 // HTTP method / auth verb — colored like a constant
+	TokString   = 2 // path / name / type arguments — colored like a string
+	TokFunction = 3 // the Func part of a custom //@pkg.Func decorator
 )
 
 // Token is one highlightable span (0-based line/char, byte length).
@@ -361,8 +362,19 @@ func SemanticTokens(text string) []Token {
 	var toks []Token
 	for _, blk := range Parse(text) {
 		for _, a := range blk.Annotations {
-			// The keyword, with its leading '@' (one column before KwStart).
-			toks = append(toks, Token{a.Line, a.KwStart - 1, a.KwEnd - a.KwStart + 1, TokKeyword})
+			at := a.KwStart - 1 // column of the leading '@'
+			// For a custom //@pkg.Func decorator, split the keyword at the dot:
+			// `@pkg` as a keyword and `Func` as a function. This is not just
+			// cosmetic — a single semantic token must NOT span the '.', because
+			// some editors (Zed) won't colorize a token that crosses it, which
+			// is why a dotted decorator would otherwise show up uncolored.
+			if dot := strings.LastIndexByte(a.Keyword, '.'); dot >= 0 {
+				dotCol := a.KwStart + dot
+				toks = append(toks, Token{a.Line, at, dotCol - at, TokKeyword})       // @pkg
+				toks = append(toks, Token{a.Line, dotCol + 1, a.KwEnd - dotCol - 1, TokFunction}) // Func
+			} else {
+				toks = append(toks, Token{a.Line, at, a.KwEnd - a.KwStart + 1, TokKeyword})
+			}
 			for i, sp := range wordSpans(lines[a.Line], a.KwEnd) {
 				if typ := argType(a, i); typ >= 0 {
 					toks = append(toks, Token{a.Line, sp.start, sp.length, typ})

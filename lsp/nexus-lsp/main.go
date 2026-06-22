@@ -124,7 +124,7 @@ func (s *server) capabilities() map[string]any {
 			},
 			"semanticTokensProvider": map[string]any{
 				"legend": map[string]any{
-					"tokenTypes":     []string{"keyword", "constant", "string"},
+					"tokenTypes":     []string{"keyword", "constant", "string", "function"},
 					"tokenModifiers": []string{},
 				},
 				"full":  true,

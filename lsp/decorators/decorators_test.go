@@ -257,6 +257,32 @@ func TestSemanticTokens_SpacedFormColumns(t *testing.T) {
 	}
 }
 
+func TestSemanticTokens_QualifiedSplitsAtDot(t *testing.T) {
+	// A custom //@pkg.Func must be split so no token spans the '.': @inertia
+	// (keyword) + Page (function) + string args. Both //@ and gofmt'd "// @".
+	for _, src := range []string{
+		"//@inertia.Page \"GET\" \"/users\" \"Users/Index\"\nfunc NewU() {}\n",
+		"// @inertia.Page \"GET\" \"/users\" \"Users/Index\"\nfunc NewU() {}\n",
+	} {
+		toks := SemanticTokens(src)
+		if len(toks) < 2 {
+			t.Fatalf("expected split keyword tokens, got %+v", toks)
+		}
+		kw, fn := toks[0], toks[1]
+		if kw.Type != TokKeyword || fn.Type != TokFunction {
+			t.Fatalf("want keyword then function, got types %d,%d", kw.Type, fn.Type)
+		}
+		// No token may cross the dot: kw must end before fn starts, with the
+		// single '.' column between them.
+		if kw.Char+kw.Length >= fn.Char {
+			t.Fatalf("tokens span the dot: kw=%+v fn=%+v", kw, fn)
+		}
+		if fn.Length != 4 { // "Page"
+			t.Fatalf("function token length = %d, want 4 (Page)", fn.Length)
+		}
+	}
+}
+
 func TestSemanticTokens_UseArgsUncolored(t *testing.T) {
 	// //@use's expression is arbitrary Go — only the keyword is colored.
 	src := "//@rest GET /x\n//@use ratelimit.PerUser(100, time.Minute)\nfunc NewX() {}\n"
