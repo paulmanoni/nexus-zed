@@ -7,10 +7,18 @@ Annotate a handler with a `//@` doc comment and nexus wires it up for you
 (`nexus generate handlers` / `nexus dev`). This extension detects those
 annotations live and gives you:
 
-- **Diagnostics** — unknown decorators (`//@reset` → *"did you mean `//@rest`?"*),
-  wrong argument counts (`//@rest GET` is missing its path), orphaned modifiers
-  (`//@auth` with no primary), multiple primaries on one function, and decorators
-  not attached to a `func`.
+- **Coloring** — decorators stop looking like flat comment grey: the `@keyword`
+  is painted like a keyword, the HTTP method like a constant, and the
+  path/name/type arguments like strings (via LSP semantic tokens, so your theme
+  picks the colors).
+- **Diagnostics** — with severity matching nexus's own contract. **Errors** for
+  anything `nexus generate handlers` rejects (the handler silently won't
+  register): unknown decorators (`//@reset` → *"did you mean `//@rest`?"*), wrong
+  argument counts (`//@rest GET` is missing its path), a bad `//@auth` value, a
+  modifier with no primary, more than one primary, and `//@auth`/`//@use` on a
+  custom `//@pkg.Func`. **Warnings** for things nexus accepts but are likely
+  mistakes (a non-standard HTTP method, a path missing its leading `/`, a
+  decorator not attached to a `func`).
 - **Outline** — every decorated handler in the file (`documentSymbol`), each
   labelled with its decorator, e.g. `NewGetUser  //@rest GET /users/:id`.
 - **Hover** — documentation for any `//@` keyword under the cursor.

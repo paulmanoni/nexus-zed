@@ -74,6 +74,45 @@ func TestDiagnostics_UnknownWithSuggestion(t *testing.T) {
 	}
 }
 
+func TestDiagnostics_HardRejectionsAreErrors(t *testing.T) {
+	// Everything nexus generate handlers rejects must surface as an Error.
+	cases := []struct {
+		name string
+		src  string
+		code string
+	}{
+		{"unknown", "//@reset\nfunc NewX() {}\n", "unknown-decorator"},
+		{"bad-args", "//@rest GET\nfunc NewX() {}\n", "bad-args"},
+		{"bad-auth", "//@query\n//@auth Admin\nfunc NewX() {}\n", "bad-auth"},
+		{"orphan-modifier", "//@auth Required\nfunc NewX() {}\n", "orphan-modifier"},
+		{"multiple-primary", "//@query\n//@mutation\nfunc NewX() {}\n", "multiple-primary"},
+		{"custom-no-modifier", "//@inertia.Page \"GET\" \"/x\" \"Y\"\n//@auth Required\nfunc NewX() {}\n", "custom-no-modifier"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := findCode(Diagnostics(tc.src), tc.code)
+			if d == nil {
+				t.Fatalf("missing %s: %+v", tc.code, Diagnostics(tc.src))
+			}
+			if d.Severity != SevError {
+				t.Fatalf("%s severity = %d, want Error(%d)", tc.code, d.Severity, SevError)
+			}
+		})
+	}
+}
+
+func TestDiagnostics_RestMethodAndPathLint(t *testing.T) {
+	if d := findCode(Diagnostics("//@rest FETCH /x\nfunc NewX() {}\n"), "bad-method"); d == nil || d.Severity != SevWarning {
+		t.Fatalf("expected bad-method warning, got %+v", Diagnostics("//@rest FETCH /x\nfunc NewX() {}\n"))
+	}
+	if d := findCode(Diagnostics("//@rest get /x\nfunc NewX() {}\n"), "method-case"); d == nil {
+		t.Fatalf("expected method-case warning for lowercase verb")
+	}
+	if d := findCode(Diagnostics("//@rest GET users\nfunc NewX() {}\n"), "bad-path"); d == nil {
+		t.Fatalf("expected bad-path warning for path without leading slash")
+	}
+}
+
 func TestDiagnostics_BadArgs(t *testing.T) {
 	src := "//@rest GET\nfunc NewX() {}\n" // missing PATH
 	d := Diagnostics(src)
@@ -179,6 +218,51 @@ func TestCompletions_PrimariesFirst(t *testing.T) {
 			seenModifier = true
 		} else if seenModifier {
 			t.Fatalf("primary %q appeared after a modifier", it.Label)
+		}
+	}
+}
+
+func TestSemanticTokens_RestLine(t *testing.T) {
+	// 0123456789...
+	// "//@rest GET /users/:id"
+	//    ^3 @ at 2, keyword "rest" at 3..7, GET at 8..11, path at 12..22
+	src := "//@rest GET /users/:id\nfunc NewX() {}\n"
+	toks := SemanticTokens(src)
+	if len(toks) != 3 {
+		t.Fatalf("got %d tokens, want 3: %+v", len(toks), toks)
+	}
+	// @rest : includes the '@', so starts at col 2, length 5 ("@rest").
+	if k := toks[0]; k.Line != 0 || k.Char != 2 || k.Length != 5 || k.Type != TokKeyword {
+		t.Errorf("keyword token = %+v, want {0 2 5 keyword}", k)
+	}
+	// GET -> constant/method
+	if m := toks[1]; m.Char != 8 || m.Length != 3 || m.Type != TokMethod {
+		t.Errorf("method token = %+v, want char 8 len 3 method", m)
+	}
+	// /users/:id -> string
+	if p := toks[2]; p.Char != 12 || p.Length != 10 || p.Type != TokString {
+		t.Errorf("path token = %+v, want char 12 len 10 string", p)
+	}
+}
+
+func TestSemanticTokens_SpacedFormColumns(t *testing.T) {
+	// gofmt'd: "// @query" — '@' at col 3, keyword at 4..9.
+	src := "// @query\nfunc NewX() {}\n"
+	toks := SemanticTokens(src)
+	if len(toks) != 1 {
+		t.Fatalf("got %d tokens, want 1: %+v", len(toks), toks)
+	}
+	if k := toks[0]; k.Char != 3 || k.Length != 6 || k.Type != TokKeyword { // "@query"
+		t.Fatalf("spaced keyword token = %+v, want {char 3 len 6 keyword}", k)
+	}
+}
+
+func TestSemanticTokens_UseArgsUncolored(t *testing.T) {
+	// //@use's expression is arbitrary Go — only the keyword is colored.
+	src := "//@rest GET /x\n//@use ratelimit.PerUser(100, time.Minute)\nfunc NewX() {}\n"
+	for _, tk := range SemanticTokens(src) {
+		if tk.Line == 1 && tk.Type != TokKeyword {
+			t.Fatalf("//@use arg should be uncolored, got token %+v", tk)
 		}
 	}
 }

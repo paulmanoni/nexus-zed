@@ -13,6 +13,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -95,6 +96,10 @@ func (s *server) handle(msg *rpcMessage) (exit bool) {
 		var p docPositionParams
 		decode(msg.Params, &p)
 		s.reply(msg.ID, s.completion(p))
+	case "textDocument/semanticTokens/full":
+		var p documentSymbolParams // {textDocument} — same shape
+		decode(msg.Params, &p)
+		s.reply(msg.ID, s.semanticTokens(p.TextDocument.URI))
 	case "shutdown":
 		s.reply(msg.ID, nil)
 	case "exit":
@@ -116,6 +121,14 @@ func (s *server) capabilities() map[string]any {
 			"hoverProvider":          true,
 			"completionProvider": map[string]any{
 				"triggerCharacters": []string{"@"},
+			},
+			"semanticTokensProvider": map[string]any{
+				"legend": map[string]any{
+					"tokenTypes":     []string{"keyword", "constant", "string"},
+					"tokenModifiers": []string{},
+				},
+				"full":  true,
+				"range": false,
 			},
 		},
 		"serverInfo": map[string]any{"name": "nexus-lsp", "version": version},
@@ -220,6 +233,36 @@ func (s *server) completion(p docPositionParams) []completionItem {
 		out = append(out, ci)
 	}
 	return out
+}
+
+// semanticTokens returns the decorator highlight spans encoded in LSP's
+// relative-delta form: five ints per token — deltaLine, deltaStartChar (from
+// the previous token, or absolute when the line changed), length, type index,
+// and modifiers (always 0 here).
+func (s *server) semanticTokens(uri string) any {
+	text, ok := s.getDoc(uri)
+	if !ok {
+		return nil
+	}
+	toks := decorators.SemanticTokens(text)
+	sort.Slice(toks, func(i, j int) bool {
+		if toks[i].Line != toks[j].Line {
+			return toks[i].Line < toks[j].Line
+		}
+		return toks[i].Char < toks[j].Char
+	})
+	data := make([]int, 0, len(toks)*5)
+	prevLine, prevChar := 0, 0
+	for _, t := range toks {
+		dl := t.Line - prevLine
+		dc := t.Char
+		if dl == 0 {
+			dc = t.Char - prevChar
+		}
+		data = append(data, dl, dc, t.Length, t.Type, 0)
+		prevLine, prevChar = t.Line, t.Char
+	}
+	return map[string]any{"data": data}
 }
 
 // inDecoratorPrefix reports whether the text on the cursor's line, up to the

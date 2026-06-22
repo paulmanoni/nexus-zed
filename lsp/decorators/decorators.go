@@ -172,27 +172,43 @@ func isCommentLine(line string) bool {
 	return strings.HasPrefix(strings.TrimLeft(line, " \t"), "//")
 }
 
+// httpMethods is the set of HTTP verbs //@rest / nexus routers expect.
+var httpMethods = map[string]bool{
+	"GET": true, "POST": true, "PUT": true, "PATCH": true,
+	"DELETE": true, "HEAD": true, "OPTIONS": true,
+}
+
 // Diagnostics validates every block and returns the problems found.
+//
+// Severity policy mirrors nexus's own contract. An Error is anything
+// `nexus generate handlers` HARD-REJECTS — the handler silently won't register,
+// so it must be loud: unknown keyword, wrong argument count, a bad //@auth
+// value, a modifier with no primary, more than one primary, and a modifier on a
+// custom //@pkg.Func. A Warning is something nexus still accepts but is almost
+// certainly a mistake (a non-standard HTTP method, a path missing its leading
+// slash, a decorator not attached to a func — which nexus simply ignores).
 func Diagnostics(text string) []Diagnostic {
 	var out []Diagnostic
 	for _, blk := range Parse(text) {
 		primaries := 0
 		hasPrimary := false
+		hasQualified := false
 		for _, a := range blk.Annotations {
 			rng := Range{Pos{a.Line, a.KwStart}, Pos{a.Line, a.KwEnd}}
 			if a.Qualified {
 				// Custom extension decorator (//@pkg.Func …) — counts as primary.
 				primaries++
 				hasPrimary = true
+				hasQualified = true
 				continue
 			}
 			spec, known := a.Spec()
 			if !known {
-				msg := fmt.Sprintf("unknown nexus decorator %q", a.Keyword)
+				msg := fmt.Sprintf("unknown nexus decorator %q — `nexus generate handlers` will fail", a.Keyword)
 				if sug := suggest(a.Keyword); sug != "" {
 					msg += fmt.Sprintf("; did you mean //@%s?", sug)
 				}
-				out = append(out, Diagnostic{rng, SevWarning, msg, "unknown-decorator"})
+				out = append(out, Diagnostic{rng, SevError, msg, "unknown-decorator"})
 				continue
 			}
 			if spec.Kind == Primary {
@@ -203,32 +219,85 @@ func Diagnostics(text string) []Diagnostic {
 				out = append(out, Diagnostic{rng, SevError,
 					fmt.Sprintf("//@%s takes %s, got %d — usage: %s", a.Keyword, argCount(spec), n, spec.Usage),
 					"bad-args"})
+				continue // arg-value checks below are meaningless with a wrong count
 			}
-			if a.Keyword == "auth" && len(a.Args) > 0 && !validAuth(a.Args) {
-				out = append(out, Diagnostic{rng, SevWarning,
-					`//@auth expects Required or Requires("ROLE")`, "bad-auth"})
+			switch a.Keyword {
+			case "auth":
+				if !validAuth(a.Args) {
+					out = append(out, Diagnostic{rng, SevError,
+						`//@auth must be Required or Requires("ROLE") — e.g. //@auth Requires("ADMIN")`, "bad-auth"})
+				}
+			case "rest":
+				out = append(out, restArgChecks(a, rng)...)
+			case "ws":
+				if !strings.HasPrefix(a.Args[0], "/") {
+					out = append(out, Diagnostic{rng, SevWarning,
+						fmt.Sprintf("//@ws path %q should start with '/'", a.Args[0]), "bad-path"})
+				}
 			}
 		}
 		if primaries > 1 {
 			a := blk.Annotations[0]
 			out = append(out, Diagnostic{
-				Range{Pos{a.Line, 0}, Pos{a.Line, a.KwEnd}}, SevWarning,
-				"multiple primary decorators on one function — only one endpoint is registered", "multiple-primary"})
+				Range{Pos{a.Line, a.KwStart}, Pos{a.Line, a.KwEnd}}, SevError,
+				"multiple primary decorators on one function — nexus allows only one per handler", "multiple-primary"})
 		}
 		if !hasPrimary && hasModifier(blk) {
 			a := blk.Annotations[0]
 			out = append(out, Diagnostic{
-				Range{Pos{a.Line, a.KwStart}, Pos{a.Line, a.KwEnd}}, SevWarning,
-				"modifier decorator has no effect without a primary (//@rest, //@query, …)", "orphan-modifier"})
+				Range{Pos{a.Line, a.KwStart}, Pos{a.Line, a.KwEnd}}, SevError,
+				"modifier decorator (//@auth, //@use) needs a primary like //@rest or //@query", "orphan-modifier"})
+		}
+		if hasQualified && hasModifier(blk) {
+			if m := firstModifier(blk); m != nil {
+				out = append(out, Diagnostic{
+					Range{Pos{m.Line, m.KwStart}, Pos{m.Line, m.KwEnd}}, SevError,
+					"a custom //@pkg.Func decorator does not accept //@auth or //@use modifiers", "custom-no-modifier"})
+			}
 		}
 		if blk.FuncName == "" {
 			a := blk.Annotations[0]
 			out = append(out, Diagnostic{
 				Range{Pos{a.Line, a.KwStart}, Pos{a.Line, a.KwEnd}}, SevWarning,
-				"decorator is not attached to a function declaration", "unattached"})
+				"decorator is not attached to a function declaration — nexus will ignore it", "unattached"})
 		}
 	}
 	return out
+}
+
+// restArgChecks validates a well-formed //@rest's METHOD and PATH (called only
+// when the argument count is already correct).
+func restArgChecks(a Annotation, rng Range) []Diagnostic {
+	var out []Diagnostic
+	method, path := a.Args[0], a.Args[1]
+	switch {
+	case !httpMethods[strings.ToUpper(method)]:
+		out = append(out, Diagnostic{rng, SevWarning,
+			fmt.Sprintf("//@rest method %q is not a standard HTTP method (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS)", method),
+			"bad-method"})
+	case method != strings.ToUpper(method):
+		out = append(out, Diagnostic{rng, SevWarning,
+			fmt.Sprintf("//@rest method %q should be upper-case: %s", method, strings.ToUpper(method)), "method-case"})
+	}
+	if !strings.HasPrefix(path, "/") {
+		out = append(out, Diagnostic{rng, SevWarning,
+			fmt.Sprintf("//@rest path %q should start with '/'", path), "bad-path"})
+	}
+	return out
+}
+
+// firstModifier returns the first built-in modifier annotation in the block.
+func firstModifier(blk Block) *Annotation {
+	for i := range blk.Annotations {
+		a := blk.Annotations[i]
+		if a.Qualified {
+			continue
+		}
+		if s, ok := a.Spec(); ok && s.Kind == Modifier {
+			return &blk.Annotations[i]
+		}
+	}
+	return nil
 }
 
 // Symbols returns one outline entry per decorated function.
@@ -265,6 +334,91 @@ func HoverAt(text string, pos Pos) string {
 		return fmt.Sprintf("**`%s`**\n\n%s", s.Usage, s.Doc)
 	}
 	return ""
+}
+
+// Semantic token type indices. They line up with the legend the LSP layer
+// advertises (["keyword", "constant", "string"]) — all standard Zed syntax
+// styles, so every theme colors them. The editor paints only these ranges; the
+// rest of the comment stays comment-colored.
+const (
+	TokKeyword = 0 // the decorator itself, e.g. `@rest` (the `@` is included)
+	TokMethod  = 1 // HTTP method / auth verb — colored like a constant
+	TokString  = 2 // path / name / type arguments — colored like a string
+)
+
+// Token is one highlightable span (0-based line/char, byte length).
+type Token struct {
+	Line, Char, Length, Type int
+}
+
+// SemanticTokens returns the highlight spans for every decorator in the text,
+// in document order. The LSP layer encodes them into the relative form the
+// protocol wants. Coloring a decorator means: the `@keyword` reads as a
+// keyword, the HTTP method as a constant, and path/name/type args as strings —
+// so `//@rest GET /users/:id` lights up instead of being flat comment grey.
+func SemanticTokens(text string) []Token {
+	lines := splitLines(text)
+	var toks []Token
+	for _, blk := range Parse(text) {
+		for _, a := range blk.Annotations {
+			// The keyword, with its leading '@' (one column before KwStart).
+			toks = append(toks, Token{a.Line, a.KwStart - 1, a.KwEnd - a.KwStart + 1, TokKeyword})
+			for i, sp := range wordSpans(lines[a.Line], a.KwEnd) {
+				if typ := argType(a, i); typ >= 0 {
+					toks = append(toks, Token{a.Line, sp.start, sp.length, typ})
+				}
+			}
+		}
+	}
+	return toks
+}
+
+type span struct{ start, length int }
+
+// wordSpans returns the [start,length) of each whitespace-separated run in line
+// at or after byte index from.
+func wordSpans(line string, from int) []span {
+	var out []span
+	i := from
+	for i < len(line) {
+		for i < len(line) && (line[i] == ' ' || line[i] == '\t') {
+			i++
+		}
+		if i >= len(line) {
+			break
+		}
+		start := i
+		for i < len(line) && line[i] != ' ' && line[i] != '\t' {
+			i++
+		}
+		out = append(out, span{start, i - start})
+	}
+	return out
+}
+
+// argType picks the token type for the i-th argument of a decorator, or -1 to
+// leave it uncolored (e.g. //@use, whose argument is an arbitrary Go expression
+// we don't try to tokenize).
+func argType(a Annotation, i int) int {
+	if a.Qualified {
+		return TokString // custom //@pkg.Func args are typically quoted strings
+	}
+	switch a.Keyword {
+	case "rest":
+		if i == 0 {
+			return TokMethod // METHOD
+		}
+		return TokString // PATH
+	case "ws", "worker":
+		return TokString // PATH/TYPE, NAME
+	case "auth":
+		if i == 0 {
+			return TokMethod // Required / Requires(...)
+		}
+		return -1
+	default:
+		return -1
+	}
 }
 
 // CompletionItem is a single completion suggestion.
