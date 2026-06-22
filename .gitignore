@@ -1,0 +1,8 @@
+# Rust / Zed extension build artifacts
+/target
+Cargo.lock
+*.wasm
+
+# Go LSP build output
+/lsp/nexus-lsp/nexus-lsp
+/bin
