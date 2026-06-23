@@ -1,9 +1,9 @@
 id = "nexus"
 name = "Nexus"
-version = "0.1.0"
+version = "0.2.0"
 schema_version = 1
 authors = ["Paul Manoni <01paulmanoni@gmail.com>"]
-description = "Nexus framework support for Zed: live detection of //@ decorator handlers — diagnostics, outline, hover, and completion."
+description = "Nexus framework support for Zed: //@ decorator handlers and nexus.toml — diagnostics, outline, hover, and completion. Zero-setup (the language server auto-downloads)."
 repository = "https://github.com/paulmanoni/nexus-zed"
 
 # Attaches a companion language server (nexus-lsp) to Go and TOML buffers,

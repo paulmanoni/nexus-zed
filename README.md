@@ -98,22 +98,31 @@ are recognized as primaries and left to their owning package.
 
 ## Install
 
-The extension is a thin WASM shell; the actual detection lives in `nexus-lsp`, a
-plain Go binary. Install it onto your PATH:
-
-```sh
-go install github.com/paulmanoni/nexus-zed/lsp/nexus-lsp@latest
-# ensure "$(go env GOPATH)/bin" is on your PATH
-```
-
-Then add the extension in Zed:
+Just add the extension — **no separate setup**:
 
 - **From the registry:** `zed: extensions` → search **Nexus** → Install.
 - **As a dev extension (this repo):** `zed: install dev extension` → pick this
   folder. Zed compiles the WASM for you (no Rust toolchain setup needed).
 
-Open any Go file that uses `//@` decorators — diagnostics and the outline appear
-immediately.
+The extension is a thin WASM shell; the detection lives in `nexus-lsp`, a plain
+Go binary. On first use it resolves the binary in this order:
+
+1. a `nexus-lsp` already on your PATH — **the dev workflow**: if you
+   `go install github.com/paulmanoni/nexus-zed/lsp/nexus-lsp@latest` (ensure
+   `"$(go env GOPATH)/bin"` is on PATH), that build wins so you can iterate on
+   the server;
+2. otherwise it **auto-downloads** the prebuilt binary for your platform from
+   this repo's [GitHub releases](https://github.com/paulmanoni/nexus-zed/releases)
+   and caches it — zero setup.
+
+Then open a Go file that uses `//@` decorators, or a `nexus.toml` — diagnostics
+and the outline appear immediately. (LSP-based coloring also needs
+`"semantic_tokens": "combined"` — see [Enable coloring](#enable-coloring).)
+
+> The prebuilt binaries are cross-compiled and attached to each release by
+> `.github/workflows/release.yml` on a `v*` tag (darwin/linux arm64+amd64,
+> windows amd64). Asset names are `nexus-lsp-<os>-<arch>[.exe]`, which is exactly
+> what `src/lib.rs` looks for.
 
 ## Develop
 

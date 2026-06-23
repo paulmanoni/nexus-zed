@@ -1,0 +1,47 @@
+name: release
+
+# Build prebuilt nexus-lsp binaries for every platform the Zed extension
+# auto-downloads, and attach them to the GitHub release for the pushed tag.
+# Asset names MUST match the format src/lib.rs expects:
+#   nexus-lsp-<goos>-<goarch>[.exe]   e.g. nexus-lsp-darwin-arm64, nexus-lsp-windows-amd64.exe
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: false
+
+      - name: Cross-compile nexus-lsp
+        working-directory: lsp
+        run: |
+          set -euo pipefail
+          mkdir -p ../dist
+          for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64 windows/amd64; do
+            os="${target%/*}"; arch="${target#*/}"
+            ext=""; [ "$os" = "windows" ] && ext=".exe"
+            out="../dist/nexus-lsp-${os}-${arch}${ext}"
+            echo "building ${out}"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
+              -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+              -o "${out}" ./nexus-lsp
+          done
+          ls -la ../dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
