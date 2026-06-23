@@ -149,9 +149,14 @@ func (s *server) capabilities() map[string]any {
 			"semanticTokensProvider": map[string]any{
 				"legend": map[string]any{
 					"tokenTypes": []string{"keyword", "constant", "string", "function"},
-					// Per-verb modifiers on the //@rest METHOD token so each HTTP
-					// method can be colored distinctly via semantic_token_rules.
-					"tokenModifiers": decorators.MethodModifiers,
+					// Per-verb method modifiers (decorators.MethodModifiers) are
+					// intentionally NOT advertised: older Zed builds (e.g. 1.7.2)
+					// stop rendering semantic tokens entirely when the legend
+					// carries modifiers, and per-verb colors need the
+					// `global_lsp_settings.semantic_token_rules` setting those
+					// builds also lack. Re-add MethodModifiers here once the
+					// target Zed supports semantic_token_rules.
+					"tokenModifiers": []string{},
 				},
 				"full":  true,
 				"range": false,
@@ -336,7 +341,10 @@ func (s *server) semanticTokens(uri string) any {
 		if dl == 0 {
 			dc = t.Char - prevChar
 		}
-		data = append(data, dl, dc, t.Length, t.Type, t.Modifiers)
+		// Emit 0 modifiers to match the empty legend advertised above (see
+		// capabilities). t.Modifiers is computed but not surfaced until a target
+		// Zed build supports modifier-based semantic_token_rules.
+		data = append(data, dl, dc, t.Length, t.Type, 0)
 		prevLine, prevChar = t.Line, t.Char
 	}
 	return map[string]any{"data": data}
