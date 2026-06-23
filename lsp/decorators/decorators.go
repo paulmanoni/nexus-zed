@@ -347,9 +347,48 @@ const (
 	TokFunction = 3 // the Func part of a custom //@pkg.Func decorator
 )
 
-// Token is one highlightable span (0-based line/char, byte length).
+// Token is one highlightable span (0-based line/char, byte length). Modifiers
+// is an LSP semantic-token modifier bitmask (0 for none).
 type Token struct {
-	Line, Char, Length, Type int
+	Line, Char, Length, Type, Modifiers int
+}
+
+// HTTP-method modifier bits, set on the METHOD token of a //@rest decorator.
+// Their bit positions line up with MethodModifiers (the tokenModifiers legend
+// the LSP advertises), so a Zed semantic_token_rule can color each verb
+// distinctly — GET green, POST amber, PUT blue, DELETE red, Postman-style.
+const (
+	ModGet = 1 << iota
+	ModPost
+	ModPut
+	ModPatch
+	ModDelete
+	ModHead
+	ModOptions
+)
+
+// MethodModifiers is the ordered modifier-name legend; index = bit position.
+var MethodModifiers = []string{"get", "post", "put", "patch", "delete", "head", "options"}
+
+// methodModifier maps an HTTP verb (any case) to its modifier bit, or 0.
+func methodModifier(method string) int {
+	switch strings.ToUpper(method) {
+	case "GET":
+		return ModGet
+	case "POST":
+		return ModPost
+	case "PUT":
+		return ModPut
+	case "PATCH":
+		return ModPatch
+	case "DELETE":
+		return ModDelete
+	case "HEAD":
+		return ModHead
+	case "OPTIONS":
+		return ModOptions
+	}
+	return 0
 }
 
 // SemanticTokens returns the highlight spans for every decorator in the text,
@@ -370,15 +409,24 @@ func SemanticTokens(text string) []Token {
 			// is why a dotted decorator would otherwise show up uncolored.
 			if dot := strings.LastIndexByte(a.Keyword, '.'); dot >= 0 {
 				dotCol := a.KwStart + dot
-				toks = append(toks, Token{a.Line, at, dotCol - at, TokKeyword})       // @pkg
-				toks = append(toks, Token{a.Line, dotCol + 1, a.KwEnd - dotCol - 1, TokFunction}) // Func
+				toks = append(toks, Token{Line: a.Line, Char: at, Length: dotCol - at, Type: TokKeyword})                   // @pkg
+				toks = append(toks, Token{Line: a.Line, Char: dotCol + 1, Length: a.KwEnd - dotCol - 1, Type: TokFunction}) // Func
 			} else {
-				toks = append(toks, Token{a.Line, at, a.KwEnd - a.KwStart + 1, TokKeyword})
+				toks = append(toks, Token{Line: a.Line, Char: at, Length: a.KwEnd - a.KwStart + 1, Type: TokKeyword})
 			}
-			for i, sp := range wordSpans(lines[a.Line], a.KwEnd) {
-				if typ := argType(a, i); typ >= 0 {
-					toks = append(toks, Token{a.Line, sp.start, sp.length, typ})
+			line := lines[a.Line]
+			for i, sp := range wordSpans(line, a.KwEnd) {
+				typ := argType(a, i)
+				if typ < 0 {
+					continue
 				}
+				tok := Token{Line: a.Line, Char: sp.start, Length: sp.length, Type: typ}
+				// The //@rest METHOD word carries a per-verb modifier so each
+				// HTTP method can be colored distinctly.
+				if !a.Qualified && a.Keyword == "rest" && i == 0 {
+					tok.Modifiers = methodModifier(line[sp.start : sp.start+sp.length])
+				}
+				toks = append(toks, tok)
 			}
 		}
 	}

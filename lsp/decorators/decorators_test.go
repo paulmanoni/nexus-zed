@@ -243,6 +243,35 @@ func TestSemanticTokens_RestLine(t *testing.T) {
 	if p := toks[2]; p.Char != 12 || p.Length != 10 || p.Type != TokString {
 		t.Errorf("path token = %+v, want char 12 len 10 string", p)
 	}
+	// GET carries the per-verb modifier so each method can color distinctly.
+	if m := toks[1]; m.Modifiers != ModGet {
+		t.Errorf("method modifier = %d, want ModGet (%d)", m.Modifiers, ModGet)
+	}
+}
+
+func TestSemanticTokens_MethodModifierPerVerb(t *testing.T) {
+	cases := map[string]int{
+		"//@rest GET /x\nfunc N(){}\n":     ModGet,
+		"//@rest post /x\nfunc N(){}\n":    ModPost, // any case
+		"//@rest DELETE /x\nfunc N(){}\n":  ModDelete,
+		"//@rest OPTIONS /x\nfunc N(){}\n": ModOptions,
+	}
+	for src, want := range cases {
+		toks := SemanticTokens(src)
+		if len(toks) < 2 || toks[1].Type != TokMethod {
+			t.Fatalf("%q: missing method token: %+v", src, toks)
+		}
+		if toks[1].Modifiers != want {
+			t.Errorf("%q: modifier = %d, want %d", src, toks[1].Modifiers, want)
+		}
+	}
+	// Auth verb (Required) uses the method TYPE but no HTTP modifier.
+	toks := SemanticTokens("//@rest GET /x\n//@auth Required\nfunc N(){}\n")
+	for _, tk := range toks {
+		if tk.Type == TokMethod && tk.Line == 1 && tk.Modifiers != 0 {
+			t.Errorf("auth verb should have no method modifier, got %d", tk.Modifiers)
+		}
+	}
 }
 
 func TestSemanticTokens_SpacedFormColumns(t *testing.T) {

@@ -131,6 +131,61 @@ func TestCompletionOnlyInDecoratorPrefix(t *testing.T) {
 	}
 }
 
+func TestTOMLDispatch(t *testing.T) {
+	s, out := newTestServer()
+	// A misplaced [runtime] key at the top level of nexus.toml.
+	src := "introspection = true\n[runtime]\n"
+	s.handle(note("textDocument/didOpen", didOpenParams{
+		TextDocument: versionedTextDocumentItem{URI: "file:///proj/nexus.toml", Text: src},
+	}))
+	var found bool
+	for _, m := range frames(t, out) {
+		if m.Method != "textDocument/publishDiagnostics" {
+			continue
+		}
+		var p publishDiagnosticsParams
+		json.Unmarshal(mustParams(t, m), &p)
+		for _, d := range p.Diagnostics {
+			if d.Code == "misplaced-runtime-key" && d.Source == "nexus" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected a misplaced-runtime-key diagnostic from a nexus.toml didOpen")
+	}
+
+	// Key completion inside a nexus.toml table.
+	out.Reset()
+	s.handle(req("textDocument/completion", 7, docPositionParams{
+		TextDocument: textDocumentIdentifier{URI: "file:///proj/nexus.toml"},
+		Position:     position{Line: 1, Character: 0}, // on the line under [runtime]
+	}))
+	var items []completionItem
+	json.Unmarshal(mustResult(t, frames(t, out)[0]), &items)
+	if len(items) == 0 {
+		t.Fatal("expected key completions inside [runtime]")
+	}
+}
+
+func TestNonNexusTOMLIsInert(t *testing.T) {
+	s, out := newTestServer()
+	// A regular Cargo.toml must not get nexus diagnostics.
+	s.handle(note("textDocument/didOpen", didOpenParams{
+		TextDocument: versionedTextDocumentItem{URI: "file:///proj/Cargo.toml", Text: "introspection = true\n"},
+	}))
+	for _, m := range frames(t, out) {
+		if m.Method != "textDocument/publishDiagnostics" {
+			continue
+		}
+		var p publishDiagnosticsParams
+		json.Unmarshal(mustParams(t, m), &p)
+		if len(p.Diagnostics) != 0 {
+			t.Fatalf("non-nexus toml should get no diagnostics, got %+v", p.Diagnostics)
+		}
+	}
+}
+
 func TestShutdownThenExit(t *testing.T) {
 	s, _ := newTestServer()
 	if s.handle(req("shutdown", 9, nil)) {

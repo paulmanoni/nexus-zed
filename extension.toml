@@ -6,8 +6,11 @@ authors = ["Paul Manoni <01paulmanoni@gmail.com>"]
 description = "Nexus framework support for Zed: live detection of //@ decorator handlers — diagnostics, outline, hover, and completion."
 repository = "https://github.com/paulmanoni/nexus-zed"
 
-# Attaches a companion language server (nexus-lsp) to Go buffers, running
-# alongside gopls. It understands nexus's //@ decorator annotations.
+# Attaches a companion language server (nexus-lsp) to Go and TOML buffers,
+# running alongside gopls / the TOML server. It understands nexus's //@ decorator
+# annotations in Go and the nexus.toml schema (diagnostics, hover, completion).
+# The server itself only acts on .go files and on files named nexus.toml; other
+# TOML files (Cargo.toml, etc.) get no nexus features.
 [language_servers.nexus-lsp]
 name = "Nexus LSP"
-languages = ["Go"]
+languages = ["Go", "TOML"]

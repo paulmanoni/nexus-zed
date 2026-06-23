@@ -79,7 +79,8 @@ type publishDiagnosticsParams struct {
 
 // SymbolKind values we use (LSP scale).
 const (
-	symbolFunction = 12
+	symbolNamespace = 3  // nexus.toml table headers
+	symbolFunction  = 12 // decorated Go handlers
 )
 
 type documentSymbol struct {
@@ -99,9 +100,12 @@ type hover struct {
 	Contents markupContent `json:"contents"`
 }
 
-// CompletionItemKind values we use.
+// CompletionItemKind values we use (LSP scale).
 const (
-	completionKeyword = 14
+	completionField   = 5  // nexus.toml keys
+	completionModule  = 9  // nexus.toml section headers
+	completionValue   = 12 // nexus.toml enum values
+	completionKeyword = 14 // //@ decorator keywords
 )
 
 type completionItem struct {

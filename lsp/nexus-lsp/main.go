@@ -19,7 +19,29 @@ import (
 	"sync"
 
 	"github.com/paulmanoni/nexus-zed/lsp/decorators"
+	"github.com/paulmanoni/nexus-zed/lsp/nexustoml"
 )
+
+// docKind classifies a document by URI: nexus.toml gets the TOML schema
+// features, .go files get the //@ decorator features, everything else is inert.
+type docKind int
+
+const (
+	kindOther docKind = iota
+	kindGo
+	kindTOML
+)
+
+func kindOf(uri string) docKind {
+	switch {
+	case strings.HasSuffix(uri, ".go"):
+		return kindGo
+	case strings.HasSuffix(uri, "/nexus.toml") || uri == "nexus.toml" || strings.HasSuffix(uri, "%2Fnexus.toml"):
+		return kindTOML
+	default:
+		return kindOther
+	}
+}
 
 // version is overridable at build time: -ldflags "-X main.version=v0.1.0".
 var version = "dev"
@@ -120,12 +142,16 @@ func (s *server) capabilities() map[string]any {
 			"documentSymbolProvider": true,
 			"hoverProvider":          true,
 			"completionProvider": map[string]any{
-				"triggerCharacters": []string{"@"},
+				// "@" triggers Go decorator completion; "[", ".", "=" trigger
+				// nexus.toml section / key / enum-value completion.
+				"triggerCharacters": []string{"@", "[", ".", "="},
 			},
 			"semanticTokensProvider": map[string]any{
 				"legend": map[string]any{
-					"tokenTypes":     []string{"keyword", "constant", "string", "function"},
-					"tokenModifiers": []string{},
+					"tokenTypes": []string{"keyword", "constant", "string", "function"},
+					// Per-verb modifiers on the //@rest METHOD token so each HTTP
+					// method can be colored distinctly via semantic_token_rules.
+					"tokenModifiers": decorators.MethodModifiers,
 				},
 				"full":  true,
 				"range": false,
@@ -163,18 +189,28 @@ func (s *server) publish(uri string) {
 	if !ok {
 		return
 	}
-	var diags []diagnostic
-	for _, d := range decorators.Diagnostics(text) {
-		diags = append(diags, diagnostic{
-			Range:    toRange(d.Range),
-			Severity: d.Severity,
-			Code:     d.Code,
-			Source:   "nexus",
-			Message:  d.Message,
-		})
-	}
-	if diags == nil {
-		diags = []diagnostic{}
+	diags := []diagnostic{}
+	switch kindOf(uri) {
+	case kindGo:
+		for _, d := range decorators.Diagnostics(text) {
+			diags = append(diags, diagnostic{
+				Range:    toRange(d.Range),
+				Severity: d.Severity,
+				Code:     d.Code,
+				Source:   "nexus",
+				Message:  d.Message,
+			})
+		}
+	case kindTOML:
+		for _, d := range nexustoml.Diagnostics(text) {
+			diags = append(diags, diagnostic{
+				Range:    tomlRange(d.Range),
+				Severity: d.Severity,
+				Code:     d.Code,
+				Source:   "nexus",
+				Message:  d.Message,
+			})
+		}
 	}
 	s.send(&rpcMessage{JSONRPC: "2.0", Method: "textDocument/publishDiagnostics",
 		Params: mustRaw(publishDiagnosticsParams{URI: uri, Diagnostics: diags})})
@@ -186,14 +222,27 @@ func (s *server) symbols(uri string) []documentSymbol {
 		return []documentSymbol{}
 	}
 	out := []documentSymbol{}
-	for _, sym := range decorators.Symbols(text) {
-		out = append(out, documentSymbol{
-			Name:           sym.Name,
-			Detail:         sym.Detail,
-			Kind:           symbolFunction,
-			Range:          toRange(sym.Range),
-			SelectionRange: toRange(sym.SelectionRange),
-		})
+	switch kindOf(uri) {
+	case kindGo:
+		for _, sym := range decorators.Symbols(text) {
+			out = append(out, documentSymbol{
+				Name:           sym.Name,
+				Detail:         sym.Detail,
+				Kind:           symbolFunction,
+				Range:          toRange(sym.Range),
+				SelectionRange: toRange(sym.SelectionRange),
+			})
+		}
+	case kindTOML:
+		for _, sym := range nexustoml.Symbols(text) {
+			out = append(out, documentSymbol{
+				Name:           sym.Name,
+				Detail:         sym.Detail,
+				Kind:           symbolNamespace,
+				Range:          tomlRange(sym.Range),
+				SelectionRange: tomlRange(sym.SelectionRange),
+			})
+		}
 	}
 	return out
 }
@@ -203,7 +252,13 @@ func (s *server) hover(p docPositionParams) any {
 	if !ok {
 		return nil
 	}
-	md := decorators.HoverAt(text, decorators.Pos{Line: p.Position.Line, Char: p.Position.Character})
+	var md string
+	switch kindOf(p.TextDocument.URI) {
+	case kindGo:
+		md = decorators.HoverAt(text, decorators.Pos{Line: p.Position.Line, Char: p.Position.Character})
+	case kindTOML:
+		md = nexustoml.HoverAt(text, nexustoml.Pos{Line: p.Position.Line, Char: p.Position.Character})
+	}
 	if md == "" {
 		return nil
 	}
@@ -215,24 +270,44 @@ func (s *server) completion(p docPositionParams) []completionItem {
 	if !ok {
 		return nil
 	}
-	// Only offer decorator completions when the cursor sits in a `//@…` prefix.
-	if !inDecoratorPrefix(text, p.Position) {
-		return nil
-	}
-	out := []completionItem{}
-	for _, it := range decorators.Completions() {
-		ci := completionItem{
-			Label:      it.Label,
-			Kind:       completionKeyword,
-			Detail:     it.Detail,
-			InsertText: it.Label,
+	switch kindOf(p.TextDocument.URI) {
+	case kindGo:
+		// Only offer decorator completions in a `//@…` prefix.
+		if !inDecoratorPrefix(text, p.Position) {
+			return nil
 		}
-		if it.Doc != "" {
-			ci.Documentation = &markupContent{Kind: "markdown", Value: it.Doc}
+		out := []completionItem{}
+		for _, it := range decorators.Completions() {
+			ci := completionItem{
+				Label:      it.Label,
+				Kind:       completionKeyword,
+				Detail:     it.Detail,
+				InsertText: it.Label,
+			}
+			if it.Doc != "" {
+				ci.Documentation = &markupContent{Kind: "markdown", Value: it.Doc}
+			}
+			out = append(out, ci)
 		}
-		out = append(out, ci)
+		return out
+	case kindTOML:
+		out := []completionItem{}
+		pos := nexustoml.Pos{Line: p.Position.Line, Char: p.Position.Character}
+		for _, it := range nexustoml.Completions(text, pos) {
+			ci := completionItem{
+				Label:      it.Label,
+				Kind:       tomlCompletionKind(it.Kind),
+				Detail:     it.Detail,
+				InsertText: it.InsertText,
+			}
+			if it.Doc != "" {
+				ci.Documentation = &markupContent{Kind: "markdown", Value: it.Doc}
+			}
+			out = append(out, ci)
+		}
+		return out
 	}
-	return out
+	return nil
 }
 
 // semanticTokens returns the decorator highlight spans encoded in LSP's
@@ -241,8 +316,10 @@ func (s *server) completion(p docPositionParams) []completionItem {
 // and modifiers (always 0 here).
 func (s *server) semanticTokens(uri string) any {
 	text, ok := s.getDoc(uri)
-	if !ok {
-		return nil
+	if !ok || kindOf(uri) != kindGo {
+		// Only Go files carry //@ decorator tokens; TOML is colored by Zed's
+		// own grammar. Return an empty set so the client clears any prior tokens.
+		return map[string]any{"data": []int{}}
 	}
 	toks := decorators.SemanticTokens(text)
 	sort.Slice(toks, func(i, j int) bool {
@@ -259,7 +336,7 @@ func (s *server) semanticTokens(uri string) any {
 		if dl == 0 {
 			dc = t.Char - prevChar
 		}
-		data = append(data, dl, dc, t.Length, t.Type, 0)
+		data = append(data, dl, dc, t.Length, t.Type, t.Modifiers)
 		prevLine, prevChar = t.Line, t.Char
 	}
 	return map[string]any{"data": data}
@@ -303,6 +380,25 @@ func toRange(r decorators.Range) rng {
 	return rng{
 		Start: position{Line: r.Start.Line, Character: r.Start.Char},
 		End:   position{Line: r.End.Line, Character: r.End.Char},
+	}
+}
+
+func tomlRange(r nexustoml.Range) rng {
+	return rng{
+		Start: position{Line: r.Start.Line, Character: r.Start.Char},
+		End:   position{Line: r.End.Line, Character: r.End.Char},
+	}
+}
+
+// tomlCompletionKind maps a nexustoml completion kind to an LSP CompletionItemKind.
+func tomlCompletionKind(kind string) int {
+	switch kind {
+	case "section":
+		return completionModule
+	case "value":
+		return completionValue
+	default:
+		return completionField
 	}
 }
 
