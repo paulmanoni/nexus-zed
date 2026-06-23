@@ -18,10 +18,12 @@ annotations live and gives you:
   anything `nexus generate handlers` rejects (the handler silently won't
   register): unknown decorators (`//@reset` → *"did you mean `//@rest`?"*), wrong
   argument counts (`//@rest GET` is missing its path), a bad `//@auth` value, a
-  modifier with no primary, more than one primary, and `//@auth`/`//@use` on a
-  custom `//@pkg.Func`. **Warnings** for things nexus accepts but are likely
-  mistakes (a non-standard HTTP method, a path missing its leading `/`, a
-  decorator not attached to a `func`).
+  modifier with no primary, and more than one primary. **Warnings** for things
+  nexus accepts but are likely mistakes (a non-standard HTTP method, a path
+  missing its leading `/`, a decorator not attached to a `func`). `//@auth` /
+  `//@use` on a custom `//@pkg.Func` is **allowed** (nexus appends it as a
+  trailing option, e.g. `inertia.Page(..., auth.Required())`), so it isn't
+  flagged.
 - **Outline** — every decorated handler in the file (`documentSymbol`), each
   labelled with its decorator, e.g. `NewGetUser  //@rest GET /users/:id`.
 - **Hover** — documentation for any `//@` keyword under the cursor.

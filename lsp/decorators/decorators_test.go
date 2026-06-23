@@ -86,7 +86,6 @@ func TestDiagnostics_HardRejectionsAreErrors(t *testing.T) {
 		{"bad-auth", "//@query\n//@auth Admin\nfunc NewX() {}\n", "bad-auth"},
 		{"orphan-modifier", "//@auth Required\nfunc NewX() {}\n", "orphan-modifier"},
 		{"multiple-primary", "//@query\n//@mutation\nfunc NewX() {}\n", "multiple-primary"},
-		{"custom-no-modifier", "//@inertia.Page \"GET\" \"/x\" \"Y\"\n//@auth Required\nfunc NewX() {}\n", "custom-no-modifier"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -98,6 +97,21 @@ func TestDiagnostics_HardRejectionsAreErrors(t *testing.T) {
 				t.Fatalf("%s severity = %d, want Error(%d)", tc.code, d.Severity, SevError)
 			}
 		})
+	}
+}
+
+func TestDiagnostics_CustomDecoratorAcceptsModifiers(t *testing.T) {
+	// nexus appends //@auth/@use as trailing options to a custom //@pkg.Func
+	// registrar (e.g. inertia.Page(..., auth.Required())), so it must NOT be
+	// flagged as a hard rejection.
+	src := "//@auth Required\n//@inertia.Page \"GET\" \"/x\" \"Y\"\nfunc NewX() {}\n"
+	if d := findCode(Diagnostics(src), "custom-no-modifier"); d != nil {
+		t.Fatalf("custom-no-modifier should no longer be emitted: %+v", d)
+	}
+	for _, d := range Diagnostics(src) {
+		if d.Severity == SevError {
+			t.Fatalf("unexpected error diagnostic on custom decorator + modifier: %+v", d)
+		}
 	}
 }
 

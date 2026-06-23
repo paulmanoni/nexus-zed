@@ -183,23 +183,23 @@ var httpMethods = map[string]bool{
 // Severity policy mirrors nexus's own contract. An Error is anything
 // `nexus generate handlers` HARD-REJECTS — the handler silently won't register,
 // so it must be loud: unknown keyword, wrong argument count, a bad //@auth
-// value, a modifier with no primary, more than one primary, and a modifier on a
-// custom //@pkg.Func. A Warning is something nexus still accepts but is almost
-// certainly a mistake (a non-standard HTTP method, a path missing its leading
-// slash, a decorator not attached to a func — which nexus simply ignores).
+// value, a modifier with no primary, and more than one primary. A Warning is
+// something nexus still accepts but is almost certainly a mistake (a
+// non-standard HTTP method, a path missing its leading slash, a decorator not
+// attached to a func — which nexus simply ignores). //@auth/@use modifiers on a
+// custom //@pkg.Func ARE accepted (appended as trailing options), so they're
+// not flagged.
 func Diagnostics(text string) []Diagnostic {
 	var out []Diagnostic
 	for _, blk := range Parse(text) {
 		primaries := 0
 		hasPrimary := false
-		hasQualified := false
 		for _, a := range blk.Annotations {
 			rng := Range{Pos{a.Line, a.KwStart}, Pos{a.Line, a.KwEnd}}
 			if a.Qualified {
 				// Custom extension decorator (//@pkg.Func …) — counts as primary.
 				primaries++
 				hasPrimary = true
-				hasQualified = true
 				continue
 			}
 			spec, known := a.Spec()
@@ -248,13 +248,6 @@ func Diagnostics(text string) []Diagnostic {
 				Range{Pos{a.Line, a.KwStart}, Pos{a.Line, a.KwEnd}}, SevError,
 				"modifier decorator (//@auth, //@use) needs a primary like //@rest or //@query", "orphan-modifier"})
 		}
-		if hasQualified && hasModifier(blk) {
-			if m := firstModifier(blk); m != nil {
-				out = append(out, Diagnostic{
-					Range{Pos{m.Line, m.KwStart}, Pos{m.Line, m.KwEnd}}, SevError,
-					"a custom //@pkg.Func decorator does not accept //@auth or //@use modifiers", "custom-no-modifier"})
-			}
-		}
 		if blk.FuncName == "" {
 			a := blk.Annotations[0]
 			out = append(out, Diagnostic{
@@ -284,20 +277,6 @@ func restArgChecks(a Annotation, rng Range) []Diagnostic {
 			fmt.Sprintf("//@rest path %q should start with '/'", path), "bad-path"})
 	}
 	return out
-}
-
-// firstModifier returns the first built-in modifier annotation in the block.
-func firstModifier(blk Block) *Annotation {
-	for i := range blk.Annotations {
-		a := blk.Annotations[i]
-		if a.Qualified {
-			continue
-		}
-		if s, ok := a.Spec(); ok && s.Kind == Modifier {
-			return &blk.Annotations[i]
-		}
-	}
-	return nil
 }
 
 // Symbols returns one outline entry per decorated function.
