@@ -86,7 +86,6 @@ func TestDiagnostics_HardRejectionsAreErrors(t *testing.T) {
 		{"bad-auth", "//@query\n//@auth Admin\nfunc NewX() {}\n", "bad-auth"},
 		{"orphan-modifier", "//@auth Required\nfunc NewX() {}\n", "orphan-modifier"},
 		{"multiple-primary", "//@query\n//@mutation\nfunc NewX() {}\n", "multiple-primary"},
-		{"custom-no-modifier", "//@auth Required\n//@inertia.Page \"A\" \"B\" \"C\"\nfunc NewX() {}\n", "custom-no-modifier"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -101,25 +100,17 @@ func TestDiagnostics_HardRejectionsAreErrors(t *testing.T) {
 	}
 }
 
-func TestDiagnostics_CustomDecoratorRejectsModifiers(t *testing.T) {
-	// A custom //@pkg.Func decorator is its own primary and does NOT accept
-	// //@auth or //@use modifiers — nexus generate handlers rejects them, so
-	// each modifier surfaces as an Error on the modifier keyword itself.
-	for _, kw := range []string{"auth Required", "use mw.Thing()"} {
-		src := "//@" + kw + "\n//@inertia.Page \"GET\" \"/x\" \"Y\"\nfunc NewX() {}\n"
-		d := findCode(Diagnostics(src), "custom-no-modifier")
-		if d == nil {
-			t.Fatalf("//@%s: expected custom-no-modifier, got %+v", kw, Diagnostics(src))
-		}
-		if d.Severity != SevError {
-			t.Fatalf("//@%s: custom-no-modifier severity = %d, want Error(%d)", kw, d.Severity, SevError)
-		}
-		if d.Range.Start.Line != 0 {
-			t.Fatalf("//@%s: diagnostic should land on the modifier line 0, got %+v", kw, d.Range)
-		}
-		// The custom decorator is a primary, so this is NOT an orphaned modifier.
-		if o := findCode(Diagnostics(src), "orphan-modifier"); o != nil {
-			t.Fatalf("//@%s: orphan-modifier should not fire for a custom primary: %+v", kw, o)
+func TestDiagnostics_CustomDecoratorAcceptsModifiers(t *testing.T) {
+	// nexus appends //@auth/@use as trailing options to a custom //@pkg.Func
+	// registrar (e.g. inertia.Page(..., auth.Required())), so it must NOT be
+	// flagged as a hard rejection.
+	src := "//@auth Required\n//@inertia.Page \"GET\" \"/x\" \"Y\"\nfunc NewX() {}\n"
+	if d := findCode(Diagnostics(src), "custom-no-modifier"); d != nil {
+		t.Fatalf("custom-no-modifier should no longer be emitted: %+v", d)
+	}
+	for _, d := range Diagnostics(src) {
+		if d.Severity == SevError {
+			t.Fatalf("unexpected error diagnostic on custom decorator + modifier: %+v", d)
 		}
 	}
 }
