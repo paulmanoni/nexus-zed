@@ -1,0 +1,29 @@
+# Demo nexus.toml for verifying the Nexus JetBrains plugin.
+# The nexus-lsp server attaches here (file name == nexus.toml) and provides
+# hover docs, completion, and diagnostics. The marked lines below intentionally
+# raise diagnostics — hover the valid keys/sections to see their docs.
+
+[runtime]
+environment = "development"
+introspection = true
+trace_capacity = 200
+
+[runtime.server]
+addr = ":8080"
+
+[runtime.middleware.cors]
+allow_origins = ["https://app.example.com"]
+max_age = "12h"
+
+[databases.main]
+driver = "postgres"
+default = true
+password = "${DB_PASSWORD}"
+
+# --- intentional mistakes: each raises a nexus diagnostic ---
+
+[runtime]
+introspectoin = true            # unknown key in a closed section → "did you mean introspection?"
+
+[runtim.server]                 # unknown section → "did you mean [runtime.server]?"
+addr = ":9090"

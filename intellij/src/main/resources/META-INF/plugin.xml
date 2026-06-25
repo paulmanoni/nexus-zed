@@ -1,0 +1,38 @@
+<idea-plugin>
+    <id>com.github.paulmanoni.nexus</id>
+    <name>Nexus</name>
+    <vendor email="01paulmanoni@gmail.com" url="https://github.com/paulmanoni/nexus-zed">Paul Manoni</vendor>
+
+    <description><![CDATA[
+        Nexus framework support for JetBrains IDEs.
+        <br/>
+        Attaches the <code>nexus-lsp</code> language server to Go files and
+        <code>nexus.toml</code>, providing live diagnostics, an outline
+        (document symbols), hover docs, completion, and semantic highlighting for
+        nexus's <code>//@</code> decorator handlers and the <code>nexus.toml</code>
+        schema. The server binary auto-downloads on first use, so there's nothing
+        to install.
+        <br/>
+        Requires the <a href="https://plugins.jetbrains.com/plugin/23257-lsp4ij">LSP4IJ</a> plugin.
+    ]]></description>
+
+    <!-- Works in any JetBrains IDE; LSP4IJ supplies the LSP client. -->
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.redhat.devtools.lsp4ij</depends>
+
+    <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">
+        <server
+            id="nexus-lsp"
+            name="Nexus LSP"
+            factoryClass="com.github.paulmanoni.nexus.NexusLanguageServerFactory">
+            <description><![CDATA[
+                nexus-lsp — //@ decorator handlers and nexus.toml schema support.
+            ]]></description>
+        </server>
+
+        <!-- Match by file name so we attach even in IDEs without the Go plugin
+             (a .go file there is plain text, but the pattern still matches). -->
+        <fileNamePatternMapping patterns="*.go" serverId="nexus-lsp" languageId="go" />
+        <fileNamePatternMapping patterns="nexus.toml" serverId="nexus-lsp" languageId="toml" />
+    </extensions>
+</idea-plugin>
