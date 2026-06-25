@@ -186,14 +186,23 @@ var httpMethods = map[string]bool{
 // value, a modifier with no primary, and more than one primary. A Warning is
 // something nexus still accepts but is almost certainly a mistake (a
 // non-standard HTTP method, a path missing its leading slash, a decorator not
-// attached to a func — which nexus simply ignores). //@auth/@use modifiers on a
-// custom //@pkg.Func ARE accepted (appended as trailing options), so they're
-// not flagged.
+// attached to a func — which nexus simply ignores). A custom //@pkg.Func
+// decorator is its own primary and does NOT accept //@auth or //@use modifiers —
+// nexus generate handlers rejects them — so each such modifier is flagged.
 func Diagnostics(text string) []Diagnostic {
 	var out []Diagnostic
 	for _, blk := range Parse(text) {
 		primaries := 0
 		hasPrimary := false
+		// A custom //@pkg.Func decorator anywhere in the block makes //@auth/@use
+		// modifiers invalid (see custom-no-modifier below).
+		hasCustom := false
+		for _, a := range blk.Annotations {
+			if a.Qualified {
+				hasCustom = true
+				break
+			}
+		}
 		for _, a := range blk.Annotations {
 			rng := Range{Pos{a.Line, a.KwStart}, Pos{a.Line, a.KwEnd}}
 			if a.Qualified {
@@ -214,6 +223,14 @@ func Diagnostics(text string) []Diagnostic {
 			if spec.Kind == Primary {
 				primaries++
 				hasPrimary = true
+			}
+			// A custom //@pkg.Func decorator takes no modifiers: nexus emits a
+			// bare registrar call, so a //@auth/@use alongside it is rejected.
+			if spec.Kind == Modifier && hasCustom {
+				out = append(out, Diagnostic{rng, SevError,
+					fmt.Sprintf("//@%s can't modify a custom //@pkg.Func decorator — custom decorators take no //@auth or //@use modifiers", a.Keyword),
+					"custom-no-modifier"})
+				continue
 			}
 			if n := len(a.Args); n < spec.MinArgs || (spec.MaxArgs >= 0 && n > spec.MaxArgs) {
 				out = append(out, Diagnostic{rng, SevError,
