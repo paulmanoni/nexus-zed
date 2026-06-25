@@ -50,4 +50,4 @@ func NewOrphanAuth(s *Service) (*User, error) { return nil, nil } // modifier wi
 
 //@inertia.Page "GET" "/dashboard" "Dashboard"
 //@auth Requires("ADMIN")
-func NewDashboard(s *Service) (*User, error) { return nil, nil } // @auth can't modify a custom //@pkg.Func → custom-no-modifier
+func NewDashboard(s *Service) (*User, error) { return nil, nil } // valid: //@auth modifies a custom //@pkg.Func — no diagnostic
